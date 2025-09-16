@@ -1315,6 +1315,8 @@ namespace Midjourney.Infrastructure.Services
         /// <returns></returns>
         public SubmitResultVO SubmitAction(TaskInfo task, SubmitActionDTO submitAction)
         {
+            var setting = GlobalConfiguration.Setting;
+
             var discordInstance = _discordLoadBalancer.GetDiscordInstanceIsAlive(task.SubInstanceId ?? task.InstanceId);
             if (discordInstance == null)
             {
@@ -1342,10 +1344,31 @@ namespace Midjourney.Infrastructure.Services
                     }
                 }
             }
+
+            var targetTask = _taskStoreService.Get(submitAction.TaskId)!;
+            if (targetTask == null)
+            {
+                return SubmitResultVO.Fail(ReturnCode.NOT_FOUND, "目标任务不存在");
+            }
+
+            // 悠船账号，当无可用账号时，采取重试机制
+            if (discordInstance == null || discordInstance?.Account?.IsDailyLimitContinueDrawing(task.Mode) != true)
+            {
+                if (targetTask.IsPartner && setting.EnableYouChuanRetry)
+                {
+                    discordInstance = _discordLoadBalancer.ChooseInstance(task.AccountFilter,
+                        isNewTask: true,
+                        botType: task.RealBotType ?? task.BotType,
+                        preferredSpeedMode: task.Mode,
+                        isYouChuan: true);
+                }
+            }
+
             if (discordInstance == null || discordInstance?.Account?.IsDailyLimitContinueDrawing(task.Mode) != true)
             {
                 return SubmitResultVO.Fail(ReturnCode.NOT_FOUND, "无可用的账号实例");
             }
+
             // 判断是否允许视频操作
             if (!discordInstance.Account.IsAllowGenerateVideo(task.Action == TaskAction.VIDEO))
             {
@@ -1375,11 +1398,7 @@ namespace Midjourney.Infrastructure.Services
                 task.Mode = mode;
             }
 
-            var targetTask = _taskStoreService.Get(submitAction.TaskId)!;
-            if (targetTask == null)
-            {
-                return SubmitResultVO.Fail(ReturnCode.NOT_FOUND, "目标任务不存在");
-            }
+
 
             var messageFlags = targetTask.GetProperty<string>(Constants.TASK_PROPERTY_FLAGS, default)?.ToInt() ?? 0;
             var messageId = targetTask.GetProperty<string>(Constants.TASK_PROPERTY_MESSAGE_ID, default);
@@ -1753,6 +1772,7 @@ namespace Midjourney.Infrastructure.Services
         /// <returns></returns>
         public SubmitResultVO SubmitModal(TaskInfo task, SubmitModalDTO submitAction, DataUrl dataUrl = null)
         {
+            var setting = GlobalConfiguration.Setting;
             var discordInstance = _discordLoadBalancer.GetDiscordInstanceIsAlive(task.SubInstanceId ?? task.InstanceId);
             if (discordInstance == null)
             {
@@ -1778,6 +1798,19 @@ namespace Midjourney.Infrastructure.Services
                         // 如果找到了，则标记当前任务的子频道信息
                         task.SubInstanceId = task.SubInstanceId ?? task.InstanceId;
                     }
+                }
+            }
+
+            // 悠船账号，当无可用账号时，采取重试机制
+            if (discordInstance == null || discordInstance?.Account?.IsDailyLimitContinueDrawing(task.Mode) != true)
+            {
+                if (task.IsPartner && setting.EnableYouChuanRetry)
+                {
+                    discordInstance = _discordLoadBalancer.ChooseInstance(task.AccountFilter,
+                        isNewTask: true,
+                        botType: task.RealBotType ?? task.BotType,
+                        preferredSpeedMode: task.Mode,
+                        isYouChuan: true);
                 }
             }
 
